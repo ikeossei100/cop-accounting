@@ -1494,8 +1494,8 @@ function renderCOA() {
   const rows = accounts.map(a => {
     const indent = a.level===1?'':a.level===2?'pl-4':'pl-8';
     return `<tr>
-      <td class="${a.type==='Group'?'font-semibold text-red-700':''}">${a.code}</td>
-      <td class="${indent} ${a.type==='Group'?'font-semibold text-red-700':''}">${a.name}</td>
+      <td class="${a.type==='Group'?'font-semibold':''}" style="${a.type==='Group'?'color:#0284c7;':''}">${a.code}</td>
+      <td class="${indent} ${a.type==='Group'?'font-semibold':''}" style="${a.type==='Group'?'color:#0284c7;':''}">${a.name}</td>
       <td>${a.type}</td><td>${a.category}</td><td>${a.dc}</td>
       <td><span class="badge-${a.active!==false?'posted':'reversed'}">${a.active!==false?'Active':'Inactive'}</span></td>
       <td><button class="text-xs font-semibold hover:underline" style="color:#0284c7;" onclick="viewAccountActivity('${a.code}')">View Activity</button></td>
@@ -1913,6 +1913,17 @@ function openContribForm(id) {
     <input type="hidden" id="cf-date" value="${c?.date||today()}">
     <div><label class="form-label">Ref#</label><input id="cf-ref" class="form-input" value="${c?.ref_no||''}" placeholder="Ref number"></div>
     <div><label class="form-label">Account *</label><select id="cf-acct" class="form-input"><option value="">— Select Account —</option>${incomeOpts}</select></div>
+    <div>
+      <label class="form-label">Received Into (Bank / Cash Account) *</label>
+      <select id="cf-bank-acct" class="form-input">
+        <option value="1110" ${(c?.bank_account_code||'1110')==='1110'?'selected':''}>1110 – Scotia Bank – General A/C</option>
+        <option value="1113" ${c?.bank_account_code==='1113'?'selected':''}>1113 – Scotia – US Exchange Fund</option>
+        <option value="1115" ${c?.bank_account_code==='1115'?'selected':''}>1115 – Head Office Savings A/C</option>
+        <option value="1121" ${c?.bank_account_code==='1121'?'selected':''}>1121 – Scotia – Missions</option>
+        <option value="1091" ${c?.bank_account_code==='1091'?'selected':''}>1091 – Cash at Hand</option>
+        <option value="1092" ${c?.bank_account_code==='1092'?'selected':''}>1092 – Petty Cash</option>
+      </select>
+    </div>
     <div><label class="form-label">Description</label><input id="cf-desc" class="form-input" value="${c?.description||''}" placeholder="e.g. Sunday Service Offering"></div>
     <div class="grid grid-cols-2 gap-3">
       <div><label class="form-label">Amount (CAD) *</label><input type="number" step="0.01" id="cf-amt" class="form-input" value="${c?.amount||''}" placeholder="0.00"></div>
@@ -1964,7 +1975,7 @@ function viewContribDetail(id) {
         <div><span class="text-gray-500 text-xs">Ref#:</span><div class="font-medium">${c.ref_no||'—'}</div></div>
         <div><span class="text-gray-500 text-xs">Account:</span><div class="font-medium text-xs">${c.account_code} – ${acct?.name||''}</div></div>
         <div><span class="text-gray-500 text-xs">District:</span><div class="font-medium">${c.district||'—'}</div></div>
-        <div><span class="text-gray-500 text-xs">Amount:</span><div class="font-bold text-lg text-red-700">${fmt(c.amount)}</div></div>
+        <div><span class="text-gray-500 text-xs">Amount:</span><div class="font-bold text-lg" style="color:#0284c7;">${fmt(c.amount)}</div></div>
         <div><span class="text-gray-500 text-xs">Status:</span><div><span class="badge-${c.status}">${c.status}</span></div></div>
         <div class="col-span-2"><span class="text-gray-500 text-xs">Description:</span><div>${c.description||'—'}</div></div>
         <div class="col-span-2"><span class="text-gray-500 text-xs">Notes:</span><div>${c.notes||'—'}</div></div>
@@ -1977,9 +1988,10 @@ async function saveContrib(id, status) {
   const date=document.getElementById('cf-date')?.value;
   const account_code=document.getElementById('cf-acct')?.value;
   const amount=parseFloat(document.getElementById('cf-amt')?.value);
+  const bank_account_code=document.getElementById('cf-bank-acct')?.value || '1110';
   if (!date||!account_code||isNaN(amount)||amount<=0) { toast('Date, account, and positive amount required.','error'); return; }
   const payload={
-    date, account_code,
+    date, account_code, bank_account_code,
     contributor_name: document.getElementById('cf-cname').value.trim(),
     envelope_number: document.getElementById('cf-envelope').value.trim(),
     contributor_phone: document.getElementById('cf-cphone').value.trim(),
@@ -1993,36 +2005,118 @@ async function saveContrib(id, status) {
     status, entered_by: myId()
   };
   if (status==='posted') { payload.posted_at=new Date().toISOString(); payload.posted_by=myId(); }
-  let error;
-  if (id) { ({error}=await sb.from('contributions').update(payload).eq('id',id).eq('status','draft')); }
-  else { ({error}=await sb.from('contributions').insert(payload)); }
+
+  let error, savedId = id;
+  if (id) {
+    ({error}=await sb.from('contributions').update(payload).eq('id',id).eq('status','draft'));
+  } else {
+    const {data:ins, error:insErr}=await sb.from('contributions').insert(payload).select('id').single();
+    error=insErr; if(ins) savedId=ins.id;
+  }
   if (error) { toast('Error: '+error.message,'error'); return; }
-  await logAction(id?'UPDATE':'CREATE','contributions',id||'new',null,{contributor_name:payload.contributor_name,amount,status});
+
+  // If posting, create the double-entry journal
+  if (status==='posted' && savedId) {
+    const jnlId = await createContribJournal({...payload, id:savedId});
+    if (jnlId) await sb.from('contributions').update({journal_id:jnlId}).eq('id',savedId);
+  }
+
+  await logAction(id?'UPDATE':'CREATE','contributions',savedId||'new',null,{contributor_name:payload.contributor_name,amount,status});
   closeModal(); await loadContributions();
-  toast(`Contribution ${status==='posted'?'posted':'saved as draft'}.`,'success');
+  toast(`Contribution ${status==='posted'?'posted and journal created':'saved as draft'}.`,'success');
+}
+
+// ── Auto-create a double-entry journal for a posted contribution ──
+async function createContribJournal(contrib) {
+  const bankCode = contrib.bank_account_code || '1110';
+  const incomeCode = contrib.account_code;
+  const amount = Math.abs(parseFloat(contrib.amount)||0);
+  const isReversal = parseFloat(contrib.amount) < 0;
+  const bankAcct  = coaCache.find(a=>a.code===bankCode);
+  const incomeAcct= coaCache.find(a=>a.code===incomeCode);
+  const bankName  = bankAcct  ? bankAcct.name  : bankCode;
+  const incomeName= incomeAcct? incomeAcct.name : incomeCode;
+
+  // DR cash/bank, CR income (or reversed for reversals)
+  const lines = isReversal
+    ? [
+        { account_code: incomeCode, dc:'DB', amount, description: incomeName },
+        { account_code: bankCode,   dc:'CR', amount, description: bankName }
+      ]
+    : [
+        { account_code: bankCode,   dc:'DB', amount, description: bankName },
+        { account_code: incomeCode, dc:'CR', amount, description: incomeName }
+      ];
+
+  const jnlPayload = {
+    date: contrib.date,
+    ref_no: contrib.ref_no || null,
+    description: `${isReversal?'REVERSAL – ':''}Contribution: ${contrib.contributor_name||'Unknown'} – ${incomeName}`,
+    type: 'CR',
+    lines,
+    status: 'posted',
+    fund_id: '01',
+    total_debit: amount,
+    total_credit: amount,
+    posted_at: new Date().toISOString(),
+    posted_by: myId(),
+    entered_by: myId()
+  };
+  const { data, error } = await sb.from('journals').insert(jnlPayload).select('id').single();
+  if (error) { console.warn('Journal create error:', error.message); return null; }
+  return data?.id || null;
 }
 
 async function postContrib(id) {
   if (!confirm('Post this contribution? It cannot be edited after posting.')) return;
-  const {error}=await sb.from('contributions').update({status:'posted',posted_at:new Date().toISOString(),posted_by:myId()}).eq('id',id).eq('status','draft');
+  const contrib = contribData.find(c=>c.id===id);
+  if (!contrib) return;
+
+  // Create journal first
+  const jnlId = await createContribJournal(contrib);
+
+  const updatePayload = { status:'posted', posted_at:new Date().toISOString(), posted_by:myId() };
+  if (jnlId) updatePayload.journal_id = jnlId;
+
+  const {error}=await sb.from('contributions').update(updatePayload).eq('id',id).eq('status','draft');
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logAction('POST','contributions',id);
-  await loadContributions(); toast('Contribution posted.','success');
+  await loadContributions(); toast('Contribution posted and journal entry created.','success');
 }
 
 async function reverseContrib(id) {
   if (!confirm('Reverse this posted contribution? A reversal entry will be created.')) return;
   const orig=contribData.find(c=>c.id===id);
   if (!orig) return;
-  const reversal={...orig,id:undefined,status:'posted',amount:-Math.abs(parseFloat(orig.amount)),
-    description:`REVERSAL: ${orig.description}`,ref_no:`REV-${orig.ref_no||id.slice(0,8)}`,
-    entered_by:myId(),posted_by:myId(),posted_at:new Date().toISOString()};
-  delete reversal.id;
+  const reversalPayload={
+    date: orig.date,
+    account_code: orig.account_code,
+    bank_account_code: orig.bank_account_code||'1110',
+    contributor_name: orig.contributor_name,
+    envelope_number: orig.envelope_number,
+    contributor_phone: orig.contributor_phone,
+    contributor_email: orig.contributor_email,
+    contributor_address: orig.contributor_address,
+    ref_no: `REV-${orig.ref_no||id.slice(0,8)}`,
+    description: `REVERSAL: ${orig.description||''}`,
+    amount: -Math.abs(parseFloat(orig.amount)),
+    district: orig.district,
+    notes: orig.notes,
+    status: 'posted',
+    entered_by: myId(), posted_by: myId(), posted_at: new Date().toISOString()
+  };
   const {error:e1}=await sb.from('contributions').update({status:'reversed'}).eq('id',id);
-  const {error:e2}=await sb.from('contributions').insert(reversal);
+  const {data:revIns, error:e2}=await sb.from('contributions').insert(reversalPayload).select('id').single();
   if (e1||e2) { toast('Reversal error.','error'); return; }
+
+  // Create reversal journal entry
+  if (revIns?.id) {
+    const jnlId = await createContribJournal({...reversalPayload, id:revIns.id});
+    if (jnlId) await sb.from('contributions').update({journal_id:jnlId}).eq('id',revIns.id);
+  }
+
   await logAction('REVERSE','contributions',id);
-  await loadContributions(); toast('Contribution reversed.','success');
+  await loadContributions(); toast('Contribution reversed and journal entry created.','success');
 }
 
 function exportContribCSV() {
@@ -2494,7 +2588,10 @@ function buildAccountBalances(journals,contribs) {
     if(l.dc==='DB') balances[l.account_code].debit+=amt;
     else balances[l.account_code].credit+=amt;
   }));
-  contribs.forEach(c=>{
+  // Only include contributions that have NOT yet been journalised (legacy/old entries).
+  // Contributions posted after the journal-auto-create update will have journal_id set,
+  // so their amounts are already captured in the journals loop above.
+  contribs.filter(c=>!c.journal_id).forEach(c=>{
     init(c.account_code);
     balances[c.account_code].credit+=parseFloat(c.amount)||0;
   });
@@ -2511,7 +2608,7 @@ async function genTrialBalance(from,to) {
     return `<tr><td>${a.code}</td><td>${a.name}</td><td class="text-right">${b.debit>0?fmt(b.debit):''}</td><td class="text-right">${b.credit>0?fmt(b.credit):''}</td></tr>`;
   }).join('');
   document.getElementById('report-content').innerHTML=`
-    <h2 class="font-display text-lg font-bold text-red-700 mb-1">Trial Balance</h2>
+    <h2 class="font-display text-lg font-bold mb-1" style="color:#0284c7;">Trial Balance</h2>
     <p class="text-xs text-gray-500 mb-4">Period: ${from} to ${to}</p>
     <table class="tbl"><thead><tr><th>Code</th><th>Account</th><th class="text-right">Debit</th><th class="text-right">Credit</th></tr></thead>
     <tbody>${rows}</tbody>
@@ -2537,15 +2634,15 @@ async function genIncomeStatement(from,to) {
   }).join('');
   const net=totalIncome-totalExpense;
   document.getElementById('report-content').innerHTML=`
-    <h2 class="font-display text-lg font-bold text-red-700 mb-1">Income Statement</h2>
+    <h2 class="font-display text-lg font-bold mb-1" style="color:#0284c7;">Income Statement</h2>
     <p class="text-xs text-gray-500 mb-4">Period: ${from} to ${to}</p>
-    <h3 class="font-bold text-red-600 mb-1 mt-3">INCOME</h3>
+    <h3 class="font-bold mb-1 mt-3" style="color:#0369a1;">INCOME</h3>
     <table class="tbl mb-3"><thead><tr><th>Code</th><th>Account</th><th class="text-right">Amount</th></tr></thead><tbody>${incomeRows}</tbody>
     <tfoot><tr class="font-bold bg-gray-50"><td colspan="2">Total Income</td><td class="text-right">${fmt(totalIncome)}</td></tr></tfoot></table>
-    <h3 class="font-bold text-red-600 mb-1">EXPENDITURE</h3>
+    <h3 class="font-bold mb-1" style="color:#0369a1;">EXPENDITURE</h3>
     <table class="tbl mb-3"><thead><tr><th>Code</th><th>Account</th><th class="text-right">Amount</th></tr></thead><tbody>${expenseRows}</tbody>
     <tfoot><tr class="font-bold bg-gray-50"><td colspan="2">Total Expenditure</td><td class="text-right">${fmt(totalExpense)}</td></tr></tfoot></table>
-    <div class="flex justify-between items-center border-t-2 border-red-700 pt-2 mt-2">
+    <div class="flex justify-between items-center border-t-2 pt-2 mt-2" style="border-color:#0284c7;">
       <span class="font-bold text-base">NET SURPLUS / (DEFICIT)</span>
       <span class="font-bold text-xl ${net>=0?'text-green-700':'text-red-700'}">${net>=0?'':' ('}${fmt(Math.abs(net))}${net>=0?'':')'}</span>
     </div>`;
@@ -2576,19 +2673,19 @@ async function genBalanceSheet(from,to) {
   const currentNet=retainedIncome-retainedExpense;
   const totalEquity=liabilities.total+fundBal.total+currentNet;
   document.getElementById('report-content').innerHTML=`
-    <h2 class="font-display text-lg font-bold text-red-700 mb-1">Balance Sheet</h2>
+    <h2 class="font-display text-lg font-bold mb-1" style="color:#0284c7;">Balance Sheet</h2>
     <p class="text-xs text-gray-500 mb-4">As at ${to}</p>
     <div class="grid md:grid-cols-2 gap-6">
       <div>
-        <h3 class="font-bold text-red-600 mb-1">ASSETS</h3>
+        <h3 class="font-bold mb-1" style="color:#0369a1;">ASSETS</h3>
         <table class="tbl mb-2"><thead><tr><th>Code</th><th>Account</th><th class="text-right">Amount</th></tr></thead><tbody>${assets.rows}</tbody>
         <tfoot><tr class="font-bold bg-gray-50"><td colspan="2">Total Assets</td><td class="text-right">${fmt(assets.total)}</td></tr></tfoot></table>
       </div>
       <div>
-        <h3 class="font-bold text-red-600 mb-1">LIABILITIES</h3>
+        <h3 class="font-bold mb-1" style="color:#0369a1;">LIABILITIES</h3>
         <table class="tbl mb-2"><thead><tr><th>Code</th><th>Account</th><th class="text-right">Amount</th></tr></thead><tbody>${liabilities.rows}</tbody>
         <tfoot><tr class="font-bold bg-gray-50"><td colspan="2">Total Liabilities</td><td class="text-right">${fmt(liabilities.total)}</td></tr></tfoot></table>
-        <h3 class="font-bold text-red-600 mb-1 mt-3">FUND BALANCE</h3>
+        <h3 class="font-bold mb-1 mt-3" style="color:#0369a1;">FUND BALANCE</h3>
         <table class="tbl mb-2"><thead><tr><th>Code</th><th>Account</th><th class="text-right">Amount</th></tr></thead><tbody>${fundBal.rows}
           <tr><td class="pl-4">—</td><td class="pl-4">Current Year Surplus/(Deficit)</td><td class="text-right">${fmt(currentNet)}</td></tr>
         </tbody><tfoot><tr class="font-bold bg-gray-50"><td colspan="2">Total Equity</td><td class="text-right">${fmt(totalEquity)}</td></tr></tfoot></table>
@@ -2615,7 +2712,7 @@ async function genContribDistribution(from,to) {
   }).join('');
   const grandTotal=list.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
   document.getElementById('report-content').innerHTML=`
-    <h2 class="font-display text-lg font-bold text-red-700 mb-1">Contribution Report</h2>
+    <h2 class="font-display text-lg font-bold mb-1" style="color:#0284c7;">Contribution Report</h2>
     <p class="text-xs text-gray-500 mb-4">Period: ${from} to ${to} &nbsp;|&nbsp; ${list.length} record(s)</p>
     <div class="overflow-x-auto">
     <table class="tbl" id="contrib-dist-table">
@@ -2672,7 +2769,7 @@ async function genContributorStatement(from,to) {
     </tr>`;
   }).join('');
   document.getElementById('report-content').innerHTML=`
-    <h2 class="font-display text-lg font-bold text-red-700 mb-1">Contributor Statement</h2>
+    <h2 class="font-display text-lg font-bold mb-1" style="color:#0284c7;">Contributor Statement</h2>
     <p class="text-xs text-gray-500 mb-4">Period: ${from} to ${to}</p>
 
     <!-- Contributor details box -->
@@ -3027,7 +3124,7 @@ async function genGLSingleAccount(from,to) {
   </tr>`;
 
   document.getElementById('report-content').innerHTML=`
-    <h2 class="font-display text-lg font-bold text-red-700 mb-1">General Ledger</h2>
+    <h2 class="font-display text-lg font-bold mb-1" style="color:#0284c7;">General Ledger</h2>
     <p class="text-xs text-gray-500 mb-1">Account: ${acctCode} – ${acct?.name||''} &nbsp;|&nbsp; Category: ${acct?.category||''}</p>
     <p class="text-xs text-gray-500 mb-4">Period: ${from} to ${to}</p>
     <table class="tbl">
@@ -3068,7 +3165,7 @@ async function genGLAllAccounts(from,to) {
     return oa-ob||a.localeCompare(b);
   });
 
-  let html=`<h2 class="font-display text-lg font-bold text-red-700 mb-1">General Ledger — All Accounts</h2>
+  let html=`<h2 class="font-display text-lg font-bold mb-1" style="color:#0284c7;">General Ledger — All Accounts</h2>
     <p class="text-xs text-gray-500 mb-5">Period: ${from} to ${to} &nbsp;|&nbsp; ${sortedCodes.length} active account(s)</p>`;
 
   let grandDb=0, grandCr=0;
