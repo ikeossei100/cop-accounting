@@ -827,7 +827,7 @@ tailwind.config = {
               <span id="imp-tb-filename" class="text-xs text-gray-500 italic truncate max-w-xs">No file chosen</span>
             </div>
             <!-- File action buttons — shown after file chosen -->
-            <div id="imp-tb-file-actions" class="hidden flex items-center gap-2 mt-2">
+            <div id="imp-tb-file-actions" style="display:none;" class="flex items-center gap-2 mt-2">
               <button onclick="submitImportFile('tb')" class="btn-primary text-xs flex items-center gap-1.5">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                 Submit File
@@ -917,7 +917,7 @@ tailwind.config = {
             <input type="file" id="imp-bank-file" accept=".pdf,.csv,.xlsx,.xls" class="hidden" onchange="onBankFileChosen()">
             <span id="imp-bank-filename" class="text-xs text-gray-500 italic truncate max-w-xs">No file chosen</span>
           </div>
-          <div id="imp-bank-file-actions" class="hidden flex items-center gap-2 mt-2">
+          <div id="imp-bank-file-actions" style="display:none;" class="flex items-center gap-2 mt-2">
             <button onclick="submitBankFile()" class="btn-primary text-xs flex items-center gap-1.5">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
               Submit File
@@ -1002,7 +1002,7 @@ tailwind.config = {
               <span id="imp-is-filename" class="text-xs text-gray-500 italic truncate max-w-xs">No file chosen</span>
             </div>
             <!-- File action buttons — shown after file chosen -->
-            <div id="imp-is-file-actions" class="hidden flex items-center gap-2 mt-2">
+            <div id="imp-is-file-actions" style="display:none;" class="flex items-center gap-2 mt-2">
               <button onclick="submitImportFile('is')" class="btn-primary text-xs flex items-center gap-1.5">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                 Submit File
@@ -3538,20 +3538,22 @@ function initPDFjs() {
 
 // ── File picker UI helpers ──
 function onImportFileChosen(tab) {
-  const input = document.getElementById(`imp-${tab}-file`);
-  const file  = input?.files?.[0];
-  const label = document.getElementById(`imp-${tab}-filename`);
+  const input   = document.getElementById(`imp-${tab}-file`);
+  const file    = input?.files?.[0];
+  const label   = document.getElementById(`imp-${tab}-filename`);
   const actions = document.getElementById(`imp-${tab}-file-actions`);
   if (file) {
     label.textContent = file.name;
-    label.classList.remove('text-gray-500','italic');
-    label.classList.add('text-gray-800','font-medium');
-    actions.classList.remove('hidden');
+    label.style.color = '#1e293b';
+    label.style.fontWeight = '600';
+    label.style.fontStyle = 'normal';
+    if (actions) actions.style.display = 'flex';
   } else {
     label.textContent = 'No file chosen';
-    label.classList.add('text-gray-500','italic');
-    label.classList.remove('text-gray-800','font-medium');
-    actions.classList.add('hidden');
+    label.style.color = '';
+    label.style.fontWeight = '';
+    label.style.fontStyle = 'italic';
+    if (actions) actions.style.display = 'none';
   }
 }
 
@@ -3566,9 +3568,8 @@ function removeImportFile(tab) {
   if (input) input.value = '';
   const label   = document.getElementById(`imp-${tab}-filename`);
   const actions = document.getElementById(`imp-${tab}-file-actions`);
-  if (label)   { label.textContent = 'No file chosen'; label.classList.add('text-gray-500','italic'); label.classList.remove('text-gray-800','font-medium'); }
-  if (actions) actions.classList.add('hidden');
-  // Also reset any parsed preview
+  if (label)   { label.textContent = 'No file chosen'; label.style.color=''; label.style.fontWeight=''; label.style.fontStyle='italic'; }
+  if (actions) actions.style.display = 'none';
   const mapper  = document.getElementById(`imp-${tab}-mapper`);
   const preview = document.getElementById(`imp-${tab}-preview`);
   if (mapper)  mapper.style.display  = 'none';
@@ -3585,14 +3586,16 @@ function onBankFileChosen() {
   const actions = document.getElementById('imp-bank-file-actions');
   if (file) {
     label.textContent = file.name;
-    label.classList.remove('text-gray-500','italic');
-    label.classList.add('text-gray-800','font-medium');
-    actions.classList.remove('hidden');
+    label.style.color = '#1e293b';
+    label.style.fontWeight = '600';
+    label.style.fontStyle = 'normal';
+    if (actions) actions.style.display = 'flex';
   } else {
     label.textContent = 'No file chosen';
-    label.classList.add('text-gray-500','italic');
-    label.classList.remove('text-gray-800','font-medium');
-    actions.classList.add('hidden');
+    label.style.color = '';
+    label.style.fontWeight = '';
+    label.style.fontStyle = 'italic';
+    if (actions) actions.style.display = 'none';
   }
 }
 
@@ -3608,8 +3611,8 @@ function removeBankFile() {
   const label   = document.getElementById('imp-bank-filename');
   const actions = document.getElementById('imp-bank-file-actions');
   const status  = document.getElementById('imp-bank-parse-status');
-  if (label)   { label.textContent = 'No file chosen'; label.classList.add('text-gray-500','italic'); label.classList.remove('text-gray-800','font-medium'); }
-  if (actions) actions.classList.add('hidden');
+  if (label)   { label.textContent = 'No file chosen'; label.style.color=''; label.style.fontWeight=''; label.style.fontStyle='italic'; }
+  if (actions) actions.style.display = 'none';
   if (status)  status.textContent = '';
   // Clear any auto-filled values
   ['imp-bank-stmt','imp-bank-book'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
@@ -4005,8 +4008,8 @@ function resetImport(tab) {
   // Reset file picker UI
   const label   = document.getElementById(`imp-${tab}-filename`);
   const actions = document.getElementById(`imp-${tab}-file-actions`);
-  if (label)   { label.textContent='No file chosen'; label.classList.add('text-gray-500','italic'); label.classList.remove('text-gray-800','font-medium'); }
-  if (actions) actions.classList.add('hidden');
+  if (label)   { label.textContent='No file chosen'; label.style.color=''; label.style.fontWeight=''; label.style.fontStyle='italic'; }
+  if (actions) actions.style.display = 'none';
   const mapper  = document.getElementById(`imp-${tab}-mapper`);
   const preview = document.getElementById(`imp-${tab}-preview`);
   if (mapper)  mapper.style.display='none';
