@@ -4072,6 +4072,7 @@ function previewImport(tab) {
 
   if(!parsed.length){toast('No valid account rows found. Check that you mapped the correct columns.','error');return;}
   importRawRows[tab+'_parsed']=parsed;
+  window['_importParsed_'+tab]=parsed; // backup in case importRawRows gets wiped
 
   const diff=Math.abs(totalDb-totalCr);
   const balanced=diff<0.01;
@@ -4123,8 +4124,12 @@ function previewImport(tab) {
 
 async function confirmImport(tab) {
   if(tab==='bank'){ await importBankOpening(); return; }
-  const parsed=importRawRows[tab+'_parsed']||[];
-  if(!parsed.length){toast('Nothing to import.','error');return;}
+  // Try both storage locations — importRawRows and window-level backup
+  const parsed=importRawRows[tab+'_parsed']||window['_importParsed_'+tab]||[];
+  if(!parsed.length){
+    toast('Nothing to import. Please go back and re-select your file, then click Preview Import again.','error');
+    return;
+  }
   const dateId=tab==='tb'?'imp-tb-date':'imp-is-date';
   const srcId=tab==='tb'?'imp-tb-source':'imp-is-source';
   const date=document.getElementById(dateId).value;
@@ -4196,6 +4201,7 @@ function resetImport(tab) {
   if (preview) preview.style.display='none';
   importRawRows[tab]=[];
   importRawRows[tab+'_parsed']=[];
+  window['_importParsed_'+tab]=null;
 }
 
 let lastImportRecord = null;
