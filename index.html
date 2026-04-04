@@ -3616,33 +3616,43 @@ function removeBankFile() {
 function parseImportFile(tab) {
   const fileInput=document.getElementById(`imp-${tab}-file`);
   const file=fileInput?.files?.[0];
-  if(!file) return;
+  if(!file) { toast('No file found. Please choose a file first.','error'); return; }
   const ext=file.name.split('.').pop().toLowerCase();
+  if(!['csv','xlsx','xls','pdf'].includes(ext)){
+    toast('Unsupported file type. Please use CSV, Excel (.xlsx/.xls), or PDF.','error'); return;
+  }
+  toast('Reading file — please wait…','info');
   if(ext==='pdf') { parsePDFImportFile(tab, file); return; }
   const reader=new FileReader();
+  reader.onerror=function(){ toast('Could not read the file. Try saving it as CSV and re-uploading.','error'); };
   reader.onload=function(e){
-    let rows=[];
-    if(ext==='csv'){
-      const text=e.target.result;
-      rows=text.trim().split('\n').map(line=>{
-        const r=[]; let cur='',inQ=false;
-        for(let i=0;i<line.length;i++){
-          if(line[i]==='"'){inQ=!inQ;}
-          else if(line[i]===','&&!inQ){r.push(cur.trim());cur='';}
-          else cur+=line[i];
-        }
-        r.push(cur.trim()); return r;
-      });
-    } else {
-      if(typeof XLSX==='undefined'){toast('Excel library not loaded. Use CSV instead.','error');return;}
-      const wb=XLSX.read(e.target.result,{type:'array'});
-      const ws=wb.Sheets[wb.SheetNames[0]];
-      rows=XLSX.utils.sheet_to_array(ws,{defval:''}).map(r=>r.map(c=>String(c===null||c===undefined?'':c).trim()));
+    try {
+      let rows=[];
+      if(ext==='csv'){
+        const text=e.target.result;
+        rows=text.trim().split(/\r?\n/).map(line=>{
+          const r=[]; let cur='',inQ=false;
+          for(let i=0;i<line.length;i++){
+            if(line[i]==='"'){inQ=!inQ;}
+            else if(line[i]===','&&!inQ){r.push(cur.trim());cur='';}
+            else cur+=line[i];
+          }
+          r.push(cur.trim()); return r;
+        });
+      } else {
+        if(typeof XLSX==='undefined'){toast('Excel library not loaded. Please save the file as CSV and try again.','error');return;}
+        const wb=XLSX.read(e.target.result,{type:'array'});
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        rows=XLSX.utils.sheet_to_array(ws,{defval:''}).map(r=>r.map(c=>String(c===null||c===undefined?'':c).trim()));
+      }
+      if(rows.length<2){toast('File appears empty. Make sure it has a header row and at least one data row.','error');return;}
+      importHeaders[tab]=rows[0].map(h=>h.trim());
+      importRawRows[tab]=rows.slice(1).filter(r=>r.some(c=>c.toString().trim()!==''));
+      if(!importRawRows[tab].length){toast('No data rows found in the file. Check that the file is not blank after the header row.','error');return;}
+      showColumnMapper(tab);
+    } catch(err) {
+      toast('Error reading file: '+err.message+'. Try saving as CSV.','error');
     }
-    if(rows.length<2){toast('File appears empty or unreadable.','error');return;}
-    importHeaders[tab]=rows[0].map(h=>h.trim());
-    importRawRows[tab]=rows.slice(1).filter(r=>r.some(c=>c.toString().trim()!==''));
-    showColumnMapper(tab);
   };
   if(ext==='csv') reader.readAsText(file);
   else reader.readAsArrayBuffer(file);
@@ -3885,6 +3895,8 @@ function showColumnMapper(tab) {
     else if(field==='name') sel.value='-1';
   });
   mapDiv.style.display='block';
+  setTimeout(()=>mapDiv.scrollIntoView({behavior:'smooth',block:'start'}),50);
+  toast('File read successfully. Map the columns below, then click Preview Import.','success');
 }
 
 function previewImport(tab) {
@@ -3932,7 +3944,9 @@ function previewImport(tab) {
   const title=document.getElementById(`imp-${tab}-preview-title`);
   if(title) title.textContent=`Preview — ${parsed.length} accounts`;
 
-  document.getElementById(`imp-${tab}-preview`).style.display='block';
+  const previewEl=document.getElementById(`imp-${tab}-preview`);
+  previewEl.style.display='block';
+  setTimeout(()=>previewEl.scrollIntoView({behavior:'smooth',block:'start'}),50);
 }
 
 async function confirmImport(tab) {
