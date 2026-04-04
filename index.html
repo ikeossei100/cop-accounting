@@ -4027,26 +4027,40 @@ function previewImport(tab) {
     const beginCol =parseInt(document.getElementById(`${mid}-begin`)?.value??'-1');
     const periodCol=parseInt(document.getElementById(`${mid}-period`)?.value??'-1');
 
+    // Parse amounts — handle $1,234.56, (1234.56) for negatives, plain numbers
+    const parseAmt=v=>{
+      let s=String(v||'').replace(/[$\s]/g,'');
+      const neg=s.startsWith('(')||s.startsWith('-');
+      s=s.replace(/[(),\-]/g,'').replace(/,/g,'');
+      const n=parseFloat(s)||0;
+      return neg?-n:n;
+    };
     rawRows.forEach(r=>{
       const code=(r[codeCol]||'').toString().trim();
       if(!code) return;
       const name=nameCol>=0?(r[nameCol]||'').toString().trim():'';
-      // Parse amounts — handle $1,234.56, (1234.56) for negatives, and plain numbers
-      const parseAmt=v=>{
-        let s=String(v||'').replace(/[$\s]/g,'');
-        const neg=s.startsWith('(')||s.startsWith('-');
-        s=s.replace(/[(),\-]/g,'');
-        const n=parseFloat(s)||0;
-        return neg?-n:n;
-      };
       const currentBal=parseAmt(r[currentCol]);
-      if(currentBal===0&&!name) return; // skip blank/zero rows with no name
+      // Only skip rows that have no code AND no name AND no balance
+      if(!currentBal && !name) return;
       const acct=coaCache.find(a=>a.code===code);
-      // Determine normal balance side from COA; default Assets/Expense=DB, others=CR
-      const normalDC = acct?.dc || (['Asset','Expense'].includes(acct?.category)?'DB':'CR') || 'DB';
+      // Determine normal balance side:
+      // 1. Use COA dc field if account exists
+      // 2. Guess from account code range: 1xxx-2xxx = Assets/Liabilities (DB normal), 3xxx = Fund Balance (CR), 4xxx = Income (CR), 5xxx = Expense (DB)
+      // 3. For IS tab, income (4xxx) = CR, expense (5xxx) = DB
+      let normalDC = acct?.dc;
+      if(!normalDC){
+        const codeNum = parseInt(code)||0;
+        if(codeNum>=4000&&codeNum<=4999) normalDC='CR';      // Income
+        else if(codeNum>=5000&&codeNum<=5999) normalDC='DB'; // Expense
+        else if(codeNum>=3000&&codeNum<=3999) normalDC='CR'; // Fund Balance
+        else if(codeNum>=2000&&codeNum<=2999) normalDC='CR'; // Liability
+        else normalDC='DB'; // Assets default
+      }
       let debit=0, credit=0;
-      if(normalDC==='DB'){ if(currentBal>0) debit=currentBal; else credit=Math.abs(currentBal); }
-      else               { if(currentBal>0) credit=currentBal; else debit=Math.abs(currentBal); }
+      const absVal=Math.abs(currentBal);
+      if(absVal===0){ debit=0; credit=0; }
+      else if(normalDC==='DB'){ if(currentBal>0) debit=absVal; else credit=absVal; }
+      else                    { if(currentBal>0) credit=absVal; else debit=absVal; }
       totalDb+=debit; totalCr+=credit;
       const beginBal  = beginCol>=0  ? parseAmt(r[beginCol])  : null;
       const periodBal = periodCol>=0 ? parseAmt(r[periodCol]) : null;
