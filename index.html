@@ -3876,77 +3876,118 @@ async function parseBankStatementFile() {
 function showColumnMapper(tab) {
   const headers=importHeaders[tab]||[];
   const prefix=tab==='tb'?'map':'is-map';
-  const mapDiv=document.getElementById(`imp-${tab}-mapper`);
-  if(!mapDiv) return;
-  const opts=headers.map((h,i)=>`<option value="${i}">${h||'(col '+(i+1)+')'}</option>`).join('');
-  const noneOpt='<option value="-1">(none)</option>';
-  // Auto-detect columns by common header names
-  const find=(terms)=>{ const i=headers.findIndex(h=>terms.some(t=>h.toLowerCase().includes(t))); return i>=0?i:-1; };
-  const codeIdx=find(['code','account code','acct']);
-  const nameIdx=find(['name','description','account name']);
-  const debitIdx=find(['debit','dr','debit balance']);
-  const creditIdx=find(['credit','cr','credit balance']);
-  ['code','name','debit','credit'].forEach((field,fi)=>{
+  const find=(terms)=>{const i=headers.findIndex(h=>terms.some(t=>h.toLowerCase().includes(t)));return i>=0?i:-1;};
+  const codeIdx =find(['code','account code','acct','acc']);
+  const nameIdx =find(['name','description','account name','desc']);
+  const debitIdx=find(['debit','dr ','dr$',' dr','debit balance','debit amount']);
+  const creditIdx=find(['credit','cr ','cr$',' cr','credit balance','credit amount']);
+  const opts=headers.map((h,i)=>`<option value="${i}">${h||'(column '+(i+1)+')'}</option>`).join('');
+  const noneOpt='<option value="-1">— not in file —</option>';
+
+  const label={'code':'Account Code *','name':'Account Name (optional)','debit':'Debit Amount *','credit':'Credit Amount *'};
+  const detected={'code':codeIdx,'name':nameIdx,'debit':debitIdx,'credit':creditIdx};
+
+  const selects=['code','name','debit','credit'].map(field=>`
+    <div>
+      <label class="form-label">${label[field]}</label>
+      <select id="${prefix}-${field}" class="form-input text-sm">
+        ${field==='name'?noneOpt:''}${opts}
+      </select>
+    </div>`).join('');
+
+  const bodyHTML=`
+    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4 text-sm text-yellow-800">
+      ✅ File read — <strong>${importRawRows[tab]?.length||0} rows</strong> with <strong>${headers.length} columns</strong> detected.<br>
+      Match each dropdown below to the correct column in your file.
+    </div>
+    <div class="grid grid-cols-2 gap-4">${selects}</div>`;
+
+  const footerHTML=`
+    <button type="button" onclick="closeModal()" class="btn-secondary">Cancel</button>
+    <button type="button" onclick="previewImport('${tab}')" class="btn-primary">Preview Import →</button>`;
+
+  openModal(
+    tab==='tb'?'Map Columns — Trial Balance / Opening Balances':'Map Columns — YTD Income Statement',
+    bodyHTML, footerHTML
+  );
+
+  // Set detected values after modal renders
+  ['code','name','debit','credit'].forEach(field=>{
     const sel=document.getElementById(`${prefix}-${field}`);
     if(!sel) return;
-    sel.innerHTML=(field==='name'?noneOpt:'')+opts;
-    const detected=[codeIdx,nameIdx,debitIdx,creditIdx][fi];
-    if(detected>=0) sel.value=detected;
-    else if(field==='name') sel.value='-1';
+    const d=detected[field];
+    sel.value = d>=0 ? d : (field==='name'?'-1':'0');
   });
-  mapDiv.style.display='block';
-  setTimeout(()=>mapDiv.scrollIntoView({behavior:'smooth',block:'start'}),50);
-  toast('File read successfully. Map the columns below, then click Preview Import.','success');
 }
 
 function previewImport(tab) {
   const prefix=tab==='tb'?'map':'is-map';
-  const codeCol=parseInt(document.getElementById(`${prefix}-code`).value);
-  const nameCol=parseInt(document.getElementById(`${prefix}-name`).value);
-  const debitCol=parseInt(document.getElementById(`${prefix}-debit`).value);
-  const creditCol=parseInt(document.getElementById(`${prefix}-credit`).value);
-  if(codeCol<0||debitCol<0||creditCol<0){toast('Please map Account Code, Debit and Credit columns.','error');return;}
+  const codeCol =parseInt(document.getElementById(`${prefix}-code`)?.value??'-1');
+  const nameCol =parseInt(document.getElementById(`${prefix}-name`)?.value??'-1');
+  const debitCol=parseInt(document.getElementById(`${prefix}-debit`)?.value??'-1');
+  const creditCol=parseInt(document.getElementById(`${prefix}-credit`)?.value??'-1');
+  if(isNaN(codeCol)||codeCol<0){toast('Please select the Account Code column.','error');return;}
+  if(isNaN(debitCol)||debitCol<0){toast('Please select the Debit column.','error');return;}
+  if(isNaN(creditCol)||creditCol<0){toast('Please select the Credit column.','error');return;}
+
   const rawRows=importRawRows[tab]||[];
+  if(!rawRows.length){toast('No data rows found. Please re-upload the file.','error');return;}
+
   let totalDb=0,totalCr=0;
   const parsed=[];
-  rawRows.forEach((r,idx)=>{
+  rawRows.forEach((r)=>{
     const code=(r[codeCol]||'').toString().trim();
     const name=nameCol>=0?(r[nameCol]||'').toString().trim():'';
-    const debit=parseFloat((r[debitCol]||'').toString().replace(/[,$]/g,''))||0;
-    const credit=parseFloat((r[creditCol]||'').toString().replace(/[,$]/g,''))||0;
-    if(!code) return;
+    const debit=parseFloat((r[debitCol]||'').toString().replace(/[$,\s]/g,''))||0;
+    const credit=parseFloat((r[creditCol]||'').toString().replace(/[$,\s]/g,''))||0;
+    if(!code||(!debit&&!credit)) return;
     totalDb+=debit; totalCr+=credit;
     const acct=coaCache.find(a=>a.code===code);
-    parsed.push({code,name:name||(acct?acct.name:''),debit,credit,matched:!!acct,rowIdx:idx});
+    parsed.push({code,name:name||(acct?acct.name:''),debit,credit,matched:!!acct});
   });
+  if(!parsed.length){toast('No valid account rows found. Check that you mapped the correct columns.','error');return;}
   importRawRows[tab+'_parsed']=parsed;
-
-  const tbody=document.getElementById(`imp-${tab}-tbody`);
-  tbody.innerHTML=parsed.map(r=>`<tr>
-    <td class="font-mono">${r.code}</td>
-    <td>${r.name}</td>
-    <td class="text-right">${r.debit>0?fmt(r.debit):''}</td>
-    <td class="text-right">${r.credit>0?fmt(r.credit):''}</td>
-    <td>${r.matched?'<span class="text-green-600 font-semibold">✓ Matched</span>':'<span class="text-orange-500">⚠ New/Unknown</span>'}</td>
-  </tr>`).join('');
-
-  const tfoot=document.getElementById(`imp-${tab}-tfoot`);
-  tfoot.innerHTML=`<tr class="font-bold bg-gray-50"><td colspan="2">TOTALS</td><td class="text-right">${fmt(totalDb)}</td><td class="text-right">${fmt(totalCr)}</td><td></td></tr>`;
 
   const diff=Math.abs(totalDb-totalCr);
   const balanced=diff<0.01;
-  const check=document.getElementById(`imp-${tab}-balance-check`);
-  if(check) check.innerHTML=balanced?'<span class="text-green-600">✓ Balanced</span>':'<span class="text-red-600">⚠ Out of balance by '+fmt(diff)+'</span>';
+  const balanceHtml=balanced
+    ?'<span class="text-green-600 font-semibold">✓ Balanced</span>'
+    :`<span class="text-red-600 font-semibold">⚠ Out of balance by ${fmt(diff)} — you can still post</span>`;
 
-  const confirmBtn=document.getElementById(`imp-${tab}-confirm-btn`);
-  if(confirmBtn) confirmBtn.disabled=false;
+  const rows=parsed.map(r=>`<tr>
+    <td class="font-mono text-xs">${r.code}</td>
+    <td class="text-xs">${r.name}</td>
+    <td class="text-right text-xs">${r.debit>0?fmt(r.debit):''}</td>
+    <td class="text-right text-xs">${r.credit>0?fmt(r.credit):''}</td>
+    <td class="text-xs">${r.matched?'<span class="text-green-600">✓</span>':'<span class="text-orange-500">New</span>'}</td>
+  </tr>`).join('');
 
-  const title=document.getElementById(`imp-${tab}-preview-title`);
-  if(title) title.textContent=`Preview — ${parsed.length} accounts`;
+  const bodyHTML=`
+    <div class="flex items-center justify-between mb-3">
+      <span class="text-sm font-semibold text-gray-700">${parsed.length} accounts — review before posting</span>
+      <div>${balanceHtml}</div>
+    </div>
+    <div class="overflow-y-auto" style="max-height:340px;">
+      <table class="tbl text-xs w-full">
+        <thead><tr><th>Code</th><th>Account Name</th><th>Debit</th><th>Credit</th><th>COA</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr class="font-bold bg-gray-50 text-xs">
+          <td colspan="2">TOTALS</td>
+          <td class="text-right">${fmt(totalDb)}</td>
+          <td class="text-right">${fmt(totalCr)}</td>
+          <td></td>
+        </tr></tfoot>
+      </table>
+    </div>`;
 
-  const previewEl=document.getElementById(`imp-${tab}-preview`);
-  previewEl.style.display='block';
-  setTimeout(()=>previewEl.scrollIntoView({behavior:'smooth',block:'start'}),50);
+  const footerHTML=`
+    <button type="button" onclick="showColumnMapper('${tab}')" class="btn-secondary">← Back</button>
+    <button type="button" onclick="confirmImport('${tab}')" class="btn-primary">Post Opening Balance Journal Entry</button>`;
+
+  openModal(
+    tab==='tb'?'Preview — Opening Balance Import':'Preview — YTD Income Statement Import',
+    bodyHTML, footerHTML
+  );
 }
 
 async function confirmImport(tab) {
