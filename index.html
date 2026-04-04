@@ -3889,77 +3889,165 @@ async function parseBankStatementFile() {
 
 function showColumnMapper(tab) {
   const headers=importHeaders[tab]||[];
-  // Use unique modal-specific IDs to avoid clash with hidden page elements
   const mid = tab==='tb'?'mtb':'mis';
   const find=(terms)=>{const i=headers.findIndex(h=>terms.some(t=>h.toLowerCase().includes(t)));return i>=0?i:-1;};
-  const codeIdx =find(['code','account code','acct','acc']);
-  const nameIdx =find(['name','description','account name','desc']);
-  const debitIdx=find(['debit','dr','debit balance','debit amount']);
-  const creditIdx=find(['credit','cr','credit balance','credit amount']);
-  const opts=headers.map((h,i)=>`<option value="${i}">${h||'(column '+(i+1)+')'}</option>`).join('');
-  const noneOpt='<option value="-1">— not in file —</option>';
+  const codeIdx   =find(['code','account code','acct','acc #','acct #']);
+  const nameIdx   =find(['name','description','account name','account title','desc']);
+  const beginIdx  =find(['begin','opening','beg bal','beginning']);
+  const periodIdx =find(['period','actual','period actual','current period']);
+  const currentIdx=find(['current','ending','ytd','current bal','end bal','balance']);
+  const debitIdx  =find(['debit','dr']);
+  const creditIdx =find(['credit','cr']);
 
-  const label={'code':'Account Code *','name':'Account Name (optional)','debit':'Debit Amount *','credit':'Credit Amount *'};
-  const detected={'code':codeIdx,'name':nameIdx,'debit':debitIdx,'credit':creditIdx};
+  const hasSingleBal = beginIdx>=0||periodIdx>=0||currentIdx>=0;
+  const hasDebitCredit = debitIdx>=0&&creditIdx>=0;
+  // Default format mode: powerchurch if single-balance columns detected, else debit/credit
+  const defaultMode = hasSingleBal ? 'pc' : 'dc';
 
-  const selects=['code','name','debit','credit'].map(field=>`
-    <div>
-      <label class="form-label">${label[field]}</label>
-      <select id="${mid}-${field}" class="form-input text-sm">
-        ${field==='name'?noneOpt:''}${opts}
-      </select>
-    </div>`).join('');
+  const noneOpt='<option value="-1">— skip —</option>';
+  const opts=headers.map((h,i)=>`<option value="${i}">${h||'(col '+(i+1)+')'}</option>`).join('');
 
   const bodyHTML=`
-    <div class="bg-green-50 border border-green-200 rounded-lg p-3 mb-4 text-sm text-green-800">
-      ✅ File read successfully — <strong>${importRawRows[tab]?.length||0} data rows</strong> and <strong>${headers.length} columns</strong> found.<br>
-      Now match each dropdown to the correct column from your file.
+    <div class="bg-green-50 border border-green-200 rounded-lg p-3 mb-3 text-sm text-green-800">
+      ✅ <strong>${importRawRows[tab]?.length||0} rows</strong> detected with <strong>${headers.length} columns</strong>.<br>
+      Select your file format below, then match the columns.
     </div>
-    <div class="grid grid-cols-2 gap-4">${selects}</div>`;
+
+    <div class="flex gap-3 mb-4">
+      <label class="flex items-center gap-2 cursor-pointer text-sm font-semibold">
+        <input type="radio" name="${mid}-fmt" value="pc" ${defaultMode==='pc'?'checked':''} onchange="toggleImportFmt('${mid}')">
+        Power Church format <span class="text-xs font-normal text-gray-500">(Beginning / Period / Current Balance)</span>
+      </label>
+      <label class="flex items-center gap-2 cursor-pointer text-sm font-semibold">
+        <input type="radio" name="${mid}-fmt" value="dc" ${defaultMode==='dc'?'checked':''} onchange="toggleImportFmt('${mid}')">
+        Debit / Credit columns
+      </label>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label class="form-label">Account Code *</label>
+        <select id="${mid}-code" class="form-input text-sm">${opts}</select>
+      </div>
+      <div>
+        <label class="form-label">Account Name (optional)</label>
+        <select id="${mid}-name" class="form-input text-sm">${noneOpt}${opts}</select>
+      </div>
+
+      <!-- Power Church columns -->
+      <div id="${mid}-pc-cols" class="contents">
+        <div>
+          <label class="form-label">Beginning Balance</label>
+          <select id="${mid}-begin" class="form-input text-sm">${noneOpt}${opts}</select>
+        </div>
+        <div>
+          <label class="form-label">Period Actual</label>
+          <select id="${mid}-period" class="form-input text-sm">${noneOpt}${opts}</select>
+        </div>
+        <div class="col-span-2">
+          <label class="form-label">Current Balance * <span class="text-gray-400 font-normal">(used as opening balance)</span></label>
+          <select id="${mid}-current" class="form-input text-sm">${noneOpt}${opts}</select>
+        </div>
+      </div>
+
+      <!-- Debit/Credit columns -->
+      <div id="${mid}-dc-cols" class="contents" style="display:none;">
+        <div>
+          <label class="form-label">Debit Amount *</label>
+          <select id="${mid}-debit" class="form-input text-sm">${opts}</select>
+        </div>
+        <div>
+          <label class="form-label">Credit Amount *</label>
+          <select id="${mid}-credit" class="form-input text-sm">${opts}</select>
+        </div>
+      </div>
+    </div>`;
 
   const footerHTML=`
     <button type="button" onclick="closeModal()" class="btn-secondary">Cancel</button>
     <button type="button" onclick="previewImport('${tab}')" class="btn-primary">Preview Import →</button>`;
 
-  openModal(
-    tab==='tb'?'Step 2 — Map Columns':'Step 2 — Map Columns',
-    bodyHTML, footerHTML
-  );
+  openModal('Step 2 — Map Columns', bodyHTML, footerHTML);
 
-  // Set auto-detected values after modal renders into DOM
-  ['code','name','debit','credit'].forEach(field=>{
-    const sel=document.getElementById(`${mid}-${field}`);
-    if(!sel) return;
-    const d=detected[field];
-    sel.value = d>=0 ? String(d) : (field==='name'?'-1':'0');
-  });
+  // Set detected values
+  const setVal=(id,val,fallback)=>{const s=document.getElementById(id);if(s)s.value=val>=0?String(val):String(fallback);};
+  setVal(`${mid}-code`,  codeIdx,   0);
+  setVal(`${mid}-name`,  nameIdx,  -1);
+  setVal(`${mid}-begin`, beginIdx, -1);
+  setVal(`${mid}-period`,periodIdx,-1);
+  setVal(`${mid}-current`,currentIdx>=0?currentIdx:(beginIdx>=0?beginIdx:-1),-1);
+  setVal(`${mid}-debit`, debitIdx,  0);
+  setVal(`${mid}-credit`,creditIdx, 1);
+
+  toggleImportFmt(mid);
+}
+
+function toggleImportFmt(mid) {
+  const isPc = document.querySelector(`input[name="${mid}-fmt"]:checked`)?.value === 'pc';
+  // Show/hide by toggling the child divs inside the contents wrappers
+  const pcWrap  = document.getElementById(`${mid}-pc-cols`);
+  const dcWrap  = document.getElementById(`${mid}-dc-cols`);
+  if(pcWrap) [...pcWrap.children].forEach(el=>el.style.display=isPc?'':'none');
+  if(dcWrap) [...dcWrap.children].forEach(el=>el.style.display=isPc?'none':'');
 }
 
 function previewImport(tab) {
   const mid = tab==='tb'?'mtb':'mis';
-  const codeCol =parseInt(document.getElementById(`${mid}-code`)?.value??'-1');
-  const nameCol =parseInt(document.getElementById(`${mid}-name`)?.value??'-1');
-  const debitCol=parseInt(document.getElementById(`${mid}-debit`)?.value??'-1');
-  const creditCol=parseInt(document.getElementById(`${mid}-credit`)?.value??'-1');
+  const isPc = document.querySelector(`input[name="${mid}-fmt"]:checked`)?.value === 'pc';
+  const codeCol   =parseInt(document.getElementById(`${mid}-code`)?.value??'-1');
+  const nameCol   =parseInt(document.getElementById(`${mid}-name`)?.value??'-1');
+
   if(isNaN(codeCol)||codeCol<0){toast('Please select the Account Code column.','error');return;}
-  if(isNaN(debitCol)||debitCol<0){toast('Please select the Debit column.','error');return;}
-  if(isNaN(creditCol)||creditCol<0){toast('Please select the Credit column.','error');return;}
 
   const rawRows=importRawRows[tab]||[];
   if(!rawRows.length){toast('No data rows found. Please re-upload the file.','error');return;}
 
   let totalDb=0,totalCr=0;
   const parsed=[];
-  rawRows.forEach((r)=>{
-    const code=(r[codeCol]||'').toString().trim();
-    const name=nameCol>=0?(r[nameCol]||'').toString().trim():'';
-    const debit=parseFloat((r[debitCol]||'').toString().replace(/[$,\s]/g,''))||0;
-    const credit=parseFloat((r[creditCol]||'').toString().replace(/[$,\s]/g,''))||0;
-    if(!code||(!debit&&!credit)) return;
-    totalDb+=debit; totalCr+=credit;
-    const acct=coaCache.find(a=>a.code===code);
-    parsed.push({code,name:name||(acct?acct.name:''),debit,credit,matched:!!acct});
-  });
+
+  if(isPc){
+    // Power Church mode: single balance column — use COA dc field to assign side
+    const currentCol=parseInt(document.getElementById(`${mid}-current`)?.value??'-1');
+    if(isNaN(currentCol)||currentCol<0){toast('Please select the Current Balance column.','error');return;}
+    const beginCol =parseInt(document.getElementById(`${mid}-begin`)?.value??'-1');
+    const periodCol=parseInt(document.getElementById(`${mid}-period`)?.value??'-1');
+
+    rawRows.forEach(r=>{
+      const code=(r[codeCol]||'').toString().trim();
+      if(!code||!/^\d{3,6}$/.test(code)) return;
+      const name=nameCol>=0?(r[nameCol]||'').toString().trim():'';
+      const parseAmt=v=>parseFloat(String(v||'').replace(/[$,\s()]/g,'').replace(/\((.+)\)/,'−$1'))||0;
+      const currentBal=parseAmt(r[currentCol]);
+      if(currentBal===0) return;
+      const acct=coaCache.find(a=>a.code===code);
+      // Determine normal balance side from COA; default Assets/Expense=DB, others=CR
+      const normalDC = acct?.dc || (['Asset','Expense'].includes(acct?.category)?'DB':'CR') || 'DB';
+      let debit=0, credit=0;
+      if(normalDC==='DB'){ if(currentBal>0) debit=currentBal; else credit=Math.abs(currentBal); }
+      else               { if(currentBal>0) credit=currentBal; else debit=Math.abs(currentBal); }
+      totalDb+=debit; totalCr+=credit;
+      const beginBal  = beginCol>=0  ? parseAmt(r[beginCol])  : null;
+      const periodBal = periodCol>=0 ? parseAmt(r[periodCol]) : null;
+      parsed.push({code, name:name||(acct?acct.name:''), debit, credit, matched:!!acct, beginBal, periodBal, currentBal});
+    });
+  } else {
+    // Debit/Credit mode
+    const debitCol =parseInt(document.getElementById(`${mid}-debit`)?.value??'-1');
+    const creditCol=parseInt(document.getElementById(`${mid}-credit`)?.value??'-1');
+    if(isNaN(debitCol)||debitCol<0){toast('Please select the Debit column.','error');return;}
+    if(isNaN(creditCol)||creditCol<0){toast('Please select the Credit column.','error');return;}
+    rawRows.forEach(r=>{
+      const code=(r[codeCol]||'').toString().trim();
+      const name=nameCol>=0?(r[nameCol]||'').toString().trim():'';
+      const debit =parseFloat((r[debitCol] ||'').toString().replace(/[$,\s]/g,''))||0;
+      const credit=parseFloat((r[creditCol]||'').toString().replace(/[$,\s]/g,''))||0;
+      if(!code||(!debit&&!credit)) return;
+      totalDb+=debit; totalCr+=credit;
+      const acct=coaCache.find(a=>a.code===code);
+      parsed.push({code, name:name||(acct?acct.name:''), debit, credit, matched:!!acct});
+    });
+  }
+
   if(!parsed.length){toast('No valid account rows found. Check that you mapped the correct columns.','error');return;}
   importRawRows[tab+'_parsed']=parsed;
 
@@ -3969,11 +4057,13 @@ function previewImport(tab) {
     ?'<span class="text-green-600 font-semibold">✓ Balanced</span>'
     :`<span class="text-red-600 font-semibold">⚠ Out of balance by ${fmt(diff)} — you can still post</span>`;
 
+  const hasPCCols = parsed.some(r=>r.beginBal!=null);
   const rows=parsed.map(r=>`<tr>
     <td class="font-mono text-xs">${r.code}</td>
     <td class="text-xs">${r.name}</td>
-    <td class="text-right text-xs">${r.debit>0?fmt(r.debit):''}</td>
-    <td class="text-right text-xs">${r.credit>0?fmt(r.credit):''}</td>
+    ${hasPCCols?`<td class="text-right text-xs">${r.beginBal!=null?fmt(r.beginBal):''}</td><td class="text-right text-xs">${r.periodBal!=null?fmt(r.periodBal):''}</td>`:''}
+    <td class="text-right text-xs font-semibold">${r.debit>0?fmt(r.debit):''}</td>
+    <td class="text-right text-xs font-semibold">${r.credit>0?fmt(r.credit):''}</td>
     <td class="text-xs">${r.matched?'<span class="text-green-600">✓</span>':'<span class="text-orange-500">New</span>'}</td>
   </tr>`).join('');
 
@@ -3984,10 +4074,14 @@ function previewImport(tab) {
     </div>
     <div class="overflow-y-auto" style="max-height:340px;">
       <table class="tbl text-xs w-full">
-        <thead><tr><th>Code</th><th>Account Name</th><th>Debit</th><th>Credit</th><th>COA</th></tr></thead>
+        <thead><tr>
+          <th>Code</th><th>Account Name</th>
+          ${hasPCCols?'<th>Beg Balance</th><th>Period Actual</th>':''}
+          <th>Debit (Opening)</th><th>Credit (Opening)</th><th>COA</th>
+        </tr></thead>
         <tbody>${rows}</tbody>
         <tfoot><tr class="font-bold bg-gray-50 text-xs">
-          <td colspan="2">TOTALS</td>
+          <td colspan="${hasPCCols?4:2}">TOTALS</td>
           <td class="text-right">${fmt(totalDb)}</td>
           <td class="text-right">${fmt(totalCr)}</td>
           <td></td>
