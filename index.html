@@ -4043,18 +4043,26 @@ function previewImport(tab) {
       // Only skip rows that have no code AND no name AND no balance
       if(!currentBal && !name) return;
       const acct=coaCache.find(a=>a.code===code);
-      // Determine normal balance side:
-      // 1. Use COA dc field if account exists
-      // 2. Guess from account code range: 1xxx-2xxx = Assets/Liabilities (DB normal), 3xxx = Fund Balance (CR), 4xxx = Income (CR), 5xxx = Expense (DB)
-      // 3. For IS tab, income (4xxx) = CR, expense (5xxx) = DB
-      let normalDC = acct?.dc;
-      if(!normalDC){
-        const codeNum = parseInt(code)||0;
-        if(codeNum>=4000&&codeNum<=4999) normalDC='CR';      // Income
-        else if(codeNum>=5000&&codeNum<=5999) normalDC='DB'; // Expense
-        else if(codeNum>=3000&&codeNum<=3999) normalDC='CR'; // Fund Balance
-        else if(codeNum>=2000&&codeNum<=2999) normalDC='CR'; // Liability
-        else normalDC='DB'; // Assets default
+      // Determine which side to put the balance on.
+      // For IS tab: Power Church exports income as DB amounts and expenses as CR amounts.
+      // For TB tab: normal accounting — income=CR, expense=DB, assets=DB, liabilities=CR.
+      const codeNum = parseInt(code)||0;
+      let normalDC;
+      if(tab==='is'){
+        // IS import: income (4xxx) → Debit, expense (5xxx) → Credit
+        if(codeNum>=4000&&codeNum<=4999)      normalDC='DB'; // Income → Debit
+        else if(codeNum>=5000&&codeNum<=5999) normalDC='CR'; // Expense → Credit
+        else                                  normalDC= acct?.dc || 'DB';
+      } else {
+        // TB import: standard accounting sides
+        normalDC = acct?.dc;
+        if(!normalDC){
+          if(codeNum>=4000&&codeNum<=4999)      normalDC='CR'; // Income → Credit
+          else if(codeNum>=5000&&codeNum<=5999) normalDC='DB'; // Expense → Debit
+          else if(codeNum>=3000&&codeNum<=3999) normalDC='CR'; // Fund Balance → Credit
+          else if(codeNum>=2000&&codeNum<=2999) normalDC='CR'; // Liability → Credit
+          else                                  normalDC='DB'; // Asset → Debit
+        }
       }
       let debit=0, credit=0;
       const absVal=Math.abs(currentBal);
