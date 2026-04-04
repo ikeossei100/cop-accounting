@@ -896,6 +896,43 @@ tailwind.config = {
         </div>
       </div>
       <button onclick="confirmImport('bank')" class="btn-primary text-xs">Save Opening Bank Reconciliation</button>
+
+      <!-- ── District Income Summary ── -->
+      <div class="mt-6 pt-5 border-t border-gray-200">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <div class="font-semibold text-gray-800 text-sm">District Income Summary</div>
+            <p class="text-xs text-gray-500 mt-0.5">View each district's current period income and year-to-date income alongside your bank statement.</p>
+          </div>
+          <button onclick="loadDistrictIncomeSummary()" class="btn-primary text-xs">Load Summary</button>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+          <div>
+            <label class="form-label">Period Month</label>
+            <select id="dis-month" class="form-input text-xs">
+              <option value="01">January</option><option value="02">February</option>
+              <option value="03">March</option><option value="04">April</option>
+              <option value="05">May</option><option value="06">June</option>
+              <option value="07">July</option><option value="08">August</option>
+              <option value="09">September</option><option value="10">October</option>
+              <option value="11">November</option><option value="12">December</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Year</label>
+            <input type="number" id="dis-year" class="form-input text-xs" value="" placeholder="e.g. 2025" min="2000" max="2099">
+          </div>
+          <div class="flex items-end">
+            <div class="flex gap-2">
+              <button onclick="exportDistrictSummaryCSV()" class="btn-secondary text-xs">Export CSV</button>
+              <button onclick="exportDistrictSummaryPDF()" class="btn-secondary text-xs">Export PDF</button>
+            </div>
+          </div>
+        </div>
+        <div id="district-summary-body">
+          <p class="text-xs text-gray-400 py-4 text-center">Select a month and year, then click Load Summary.</p>
+        </div>
+      </div>
     </div>
 
     <!-- TAB: YTD Income Statement -->
@@ -3392,10 +3429,15 @@ function showImportPanel() {
   document.getElementById('import-panel').style.display='block';
   setImportTab('tb');
   // Set default dates to start of current year
-  const y = new Date().getFullYear();
+  const now = new Date();
+  const y = now.getFullYear();
   const d = `${y}-01-01`;
   ['imp-tb-date','imp-is-date'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=d; });
   document.getElementById('imp-bank-date').value=d;
+  // Default district summary to current month/year
+  const mo = String(now.getMonth()+1).padStart(2,'0');
+  const disMonth = document.getElementById('dis-month'); if(disMonth) disMonth.value=mo;
+  const disYear  = document.getElementById('dis-year');  if(disYear)  disYear.value=String(y);
   document.getElementById('import-panel').scrollIntoView({behavior:'smooth'});
 }
 function hideImportPanel() { document.getElementById('import-panel').style.display='none'; }
@@ -3911,6 +3953,212 @@ function exportImportPDF() {
     doc.text('System-generated import confirmation — COP Accounting Management System',14,290);
   }
   doc.save(`Import_Confirmation_${rec.date.replace(/-/g,'')}.pdf`);
+}
+
+// ══════════════════════════════════════════════
+// DISTRICT INCOME SUMMARY
+// ══════════════════════════════════════════════
+let districtSummaryData = null;
+
+async function loadDistrictIncomeSummary() {
+  const mo   = document.getElementById('dis-month')?.value;
+  const yr   = document.getElementById('dis-year')?.value;
+  const body = document.getElementById('district-summary-body');
+  if (!mo || !yr) { toast('Select month and year first.', 'error'); return; }
+
+  body.innerHTML = '<p class="text-xs text-gray-400 py-4 text-center">Loading…</p>';
+
+  const year = parseInt(yr);
+  // Period = selected month
+  const lastDay = new Date(year, parseInt(mo), 0).getDate();
+  const periodFrom = `${yr}-${mo}-01`;
+  const periodTo   = `${yr}-${mo}-${String(lastDay).padStart(2,'0')}`;
+  // YTD = Jan 1 to end of selected month
+  const ytdFrom = `${yr}-01-01`;
+  const ytdTo   = periodTo;
+
+  try {
+    // Fetch contributions for period and YTD (posted only)
+    const [cPeriodRes, cYTDRes, jPeriodRes, jYTDRes] = await Promise.all([
+      sb.from('contributions').select('account_code,amount').eq('status','posted').gte('date',periodFrom).lte('date',periodTo),
+      sb.from('contributions').select('account_code,amount').eq('status','posted').gte('date',ytdFrom).lte('date',ytdTo),
+      sb.from('journals').select('lines').eq('status','posted').gte('date',periodFrom).lte('date',periodTo),
+      sb.from('journals').select('lines').eq('status','posted').gte('date',ytdFrom).lte('date',ytdTo)
+    ]);
+
+    // District account codes: 4051–4088 (children of 4050 in COA)
+    const districtAccounts = coaCache.filter(a =>
+      a.type === 'Detail' && a.active !== false &&
+      parseInt(a.code) >= 4051 && parseInt(a.code) <= 4088
+    ).sort((a,b) => (a.sort_order||0) - (b.sort_order||0));
+
+    // Build totals map: code → {period, ytd}
+    const totals = {};
+    const init = code => { if (!totals[code]) totals[code] = { period: 0, ytd: 0 }; };
+    districtAccounts.forEach(a => init(a.code));
+
+    // Contributions (contributions always credit income)
+    (cPeriodRes.data||[]).forEach(c => { if(totals[c.account_code] !== undefined) totals[c.account_code].period += parseFloat(c.amount)||0; });
+    (cYTDRes.data||[]).forEach(c   => { if(totals[c.account_code] !== undefined) totals[c.account_code].ytd   += parseFloat(c.amount)||0; });
+
+    // Journal lines (CR = income for income accounts)
+    const addJournalLines = (jnls, key) => {
+      (jnls||[]).forEach(j => (j.lines||[]).forEach(l => {
+        if (totals[l.account_code] !== undefined && l.dc === 'CR') {
+          totals[l.account_code][key] += parseFloat(l.amount)||0;
+        }
+      }));
+    };
+    addJournalLines(jPeriodRes.data, 'period');
+    addJournalLines(jYTDRes.data,    'ytd');
+
+    // Store for export
+    const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const monthLabel = monthNames[parseInt(mo)-1];
+    districtSummaryData = { districtAccounts, totals, monthLabel, yr, periodFrom, periodTo, ytdFrom, ytdTo };
+
+    // Render table
+    let periodTotal = 0, ytdTotal = 0;
+    const rows = districtAccounts.map(a => {
+      const t = totals[a.code] || { period:0, ytd:0 };
+      periodTotal += t.period; ytdTotal += t.ytd;
+      const hasData = t.period > 0 || t.ytd > 0;
+      return `<tr class="${hasData?'':'opacity-40'}">
+        <td class="font-medium">${a.code}</td>
+        <td class="font-semibold text-gray-800">${a.name}</td>
+        <td class="text-right font-mono ${t.period>0?'font-semibold':''}" style="${t.period>0?'color:#0284c7;':''}">${t.period>0 ? fmt(t.period) : '—'}</td>
+        <td class="text-right font-mono ${t.ytd>0?'font-semibold':''}">${t.ytd>0 ? fmt(t.ytd) : '—'}</td>
+      </tr>`;
+    }).join('');
+
+    body.innerHTML = `
+      <!-- Summary stat cards -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <div class="stat-card" style="border-left-color:#0284c7;">
+          <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Period</div>
+          <div class="text-xs text-gray-400 mb-1">${monthLabel} ${yr}</div>
+          <div class="text-lg font-bold" style="color:#0284c7;">${fmt(periodTotal)}</div>
+        </div>
+        <div class="stat-card" style="border-left-color:#059669;">
+          <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Year to Date</div>
+          <div class="text-xs text-gray-400 mb-1">Jan – ${monthLabel} ${yr}</div>
+          <div class="text-lg font-bold text-green-700">${fmt(ytdTotal)}</div>
+        </div>
+        <div class="stat-card" style="border-left-color:#B8860B;">
+          <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Active Districts</div>
+          <div class="text-xs text-gray-400 mb-1">with income</div>
+          <div class="text-lg font-bold text-yellow-700">${districtAccounts.filter(a=>(totals[a.code]?.period||0)>0||(totals[a.code]?.ytd||0)>0).length}</div>
+        </div>
+        <div class="stat-card" style="border-left-color:#6366f1;">
+          <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Total Districts</div>
+          <div class="text-xs text-gray-400 mb-1">in chart of accounts</div>
+          <div class="text-lg font-bold text-indigo-700">${districtAccounts.length}</div>
+        </div>
+      </div>
+      <!-- Table -->
+      <div class="overflow-x-auto">
+        <table class="tbl text-sm">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>District Name</th>
+              <th class="text-right">Current Period<br><span class="font-normal normal-case" style="font-size:0.65rem;opacity:0.85;">${monthLabel} ${yr}</span></th>
+              <th class="text-right">Year to Date<br><span class="font-normal normal-case" style="font-size:0.65rem;opacity:0.85;">Jan – ${monthLabel} ${yr}</span></th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr style="background:#eff6ff;">
+              <td colspan="2" class="font-bold text-gray-800">TOTAL</td>
+              <td class="text-right font-bold font-mono" style="color:#0284c7;">${fmt(periodTotal)}</td>
+              <td class="text-right font-bold font-mono text-green-700">${fmt(ytdTotal)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <p class="text-xs text-gray-400 mt-2">Rows with no income are shown dimmed. Includes posted contributions and posted journal entries.</p>`;
+
+  } catch(e) {
+    body.innerHTML = `<p class="text-xs text-red-600 py-4">Error loading data: ${e.message}</p>`;
+  }
+}
+
+function exportDistrictSummaryCSV() {
+  if (!districtSummaryData) { toast('Load the summary first.', 'error'); return; }
+  const { districtAccounts, totals, monthLabel, yr, periodFrom, periodTo, ytdFrom, ytdTo } = districtSummaryData;
+  const rows = [
+    ['Church of Pentecost Canada Inc — District Income Summary'],
+    [`Period: ${monthLabel} ${yr} (${periodFrom} – ${periodTo})`],
+    [`YTD: ${ytdFrom} – ${ytdTo}`],
+    [],
+    ['Account Code', 'District Name', `Current Period (${monthLabel} ${yr})`, `Year to Date (Jan–${monthLabel} ${yr})`]
+  ];
+  let pTotal = 0, ytdTotal = 0;
+  districtAccounts.forEach(a => {
+    const t = totals[a.code] || { period:0, ytd:0 };
+    pTotal += t.period; ytdTotal += t.ytd;
+    rows.push([a.code, a.name, t.period > 0 ? t.period.toFixed(2) : '0.00', t.ytd > 0 ? t.ytd.toFixed(2) : '0.00']);
+  });
+  rows.push(['', 'TOTAL', pTotal.toFixed(2), ytdTotal.toFixed(2)]);
+  downloadCSV(rows, `District_Income_${monthLabel}_${yr}.csv`);
+}
+
+function exportDistrictSummaryPDF() {
+  if (!districtSummaryData) { toast('Load the summary first.', 'error'); return; }
+  if (typeof window.jspdf === 'undefined') { toast('jsPDF not loaded.', 'error'); return; }
+  const { jsPDF } = window.jspdf;
+  const { districtAccounts, totals, monthLabel, yr, periodFrom, periodTo, ytdFrom, ytdTo } = districtSummaryData;
+
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  // Letterhead
+  doc.setFillColor(2,132,199); doc.rect(0,0,210,22,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15);
+  doc.text('Church of Pentecost Canada Inc', 14, 10);
+  doc.setFont('helvetica','normal'); doc.setFontSize(11);
+  doc.text('District Income Summary', 14, 16);
+  doc.setFontSize(10); doc.setTextColor(200,230,255);
+  doc.text(`Printed: ${new Date().toLocaleString('en-CA')}`, 196, 10, {align:'right'});
+
+  // Title block
+  doc.setTextColor(2,132,199); doc.setFont('helvetica','bold'); doc.setFontSize(16);
+  doc.text(`District Income — ${monthLabel} ${yr}`, 14, 32);
+  doc.setFont('helvetica','normal'); doc.setFontSize(11); doc.setTextColor(80,80,80);
+  doc.text(`Current Period: ${periodFrom} to ${periodTo}`, 14, 39);
+  doc.text(`Year to Date:   ${ytdFrom} to ${ytdTo}`, 14, 45);
+
+  let pTotal = 0, ytdTotal = 0;
+  const tableRows = districtAccounts.map(a => {
+    const t = totals[a.code] || { period:0, ytd:0 };
+    pTotal += t.period; ytdTotal += t.ytd;
+    return [
+      a.code, a.name,
+      t.period > 0 ? fmt(t.period) : '—',
+      t.ytd > 0 ? fmt(t.ytd) : '—'
+    ];
+  });
+
+  doc.autoTable({
+    head: [['Code', 'District Name', `Current Period\n${monthLabel} ${yr}`, `Year to Date\nJan–${monthLabel} ${yr}`]],
+    body: tableRows,
+    foot: [['', 'TOTAL', fmt(pTotal), fmt(ytdTotal)]],
+    startY: 52,
+    theme: 'striped',
+    headStyles: { fillColor:[2,132,199], textColor:[255,255,255], fontStyle:'bold', fontSize:10 },
+    footStyles: { fillColor:[224,242,254], textColor:[2,84,149], fontStyle:'bold', fontSize:10 },
+    bodyStyles: { fontSize:10 },
+    columnStyles: { 0:{cellWidth:18}, 2:{halign:'right', cellWidth:36}, 3:{halign:'right', cellWidth:36} },
+    margin: { left:14, right:14 }
+  });
+
+  // Page numbers
+  const pages = doc.getNumberOfPages();
+  for (let i=1; i<=pages; i++) {
+    doc.setPage(i);
+    doc.setFontSize(9); doc.setTextColor(150,150,150);
+    doc.text(`Page ${i} of ${pages}`, 196, 290, {align:'right'});
+    doc.text('COP Accounting Management System', 14, 290);
+  }
+  doc.save(`District_Income_${monthLabel}_${yr}.pdf`);
 }
 
 // ══════════════════════════════════════════════
