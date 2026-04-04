@@ -46,6 +46,13 @@
 - **Spacing:** Use intentional, consistent spacing tokens — not random Tailwind steps.
 - **Depth:** Surfaces should have a layering system (base → elevated → floating), not all sit at the same z-plane.
 
+## Security — Secrets & Environment Files
+- **Never read, display, log, or commit `.env` files or any file containing secrets.**
+- Never read `.env`, `.env.local`, `.env.production`, or any file named `*.env`.
+- Never include API keys, tokens, passwords, or credentials in any output, response, or committed file.
+- If a secret is needed in code, reference an environment variable by name only (e.g. `process.env.SUPABASE_KEY`) — never paste the actual value.
+- If a `.env` file is detected in the project, do not open it and remind the user to add it to `.gitignore`.
+
 ## Hard Rules
 - Do not add sections, features, or content not in the reference
 - Do not "improve" a reference design — match it

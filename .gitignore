@@ -1,0 +1,12 @@
+# Environment & secrets — never commit these
+.env
+.env.local
+.env.production
+.env.*.local
+*.env
+
+# Temporary screenshots
+temporary screenshots/
+
+# Node
+node_modules/
