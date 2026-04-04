@@ -3791,7 +3791,7 @@ function renderPDFPreview(tab, parsed) {
   if(title) title.textContent=`PDF Preview — ${parsed.length} accounts detected`;
 
   const confirmBtn=document.getElementById(`imp-${tab}-confirm-btn`);
-  if(confirmBtn) confirmBtn.disabled=!balanced;
+  if(confirmBtn) confirmBtn.disabled=false;
 
   document.getElementById(`imp-${tab}-mapper`).style.display='none';
   document.getElementById(`imp-${tab}-preview`).style.display='block';
@@ -3933,7 +3933,7 @@ function previewImport(tab) {
   if(check) check.innerHTML=balanced?'<span class="text-green-600">✓ Balanced</span>':'<span class="text-red-600">⚠ Out of balance by '+fmt(diff)+'</span>';
 
   const confirmBtn=document.getElementById(`imp-${tab}-confirm-btn`);
-  if(confirmBtn) confirmBtn.disabled=!balanced;
+  if(confirmBtn) confirmBtn.disabled=false;
 
   const title=document.getElementById(`imp-${tab}-preview-title`);
   if(title) title.textContent=`Preview — ${parsed.length} accounts`;
