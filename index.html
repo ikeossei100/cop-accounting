@@ -4159,10 +4159,19 @@ async function confirmImport(tab) {
   if(!date){toast('Please set the as-of date.','error');return;}
 
   const lines=parsed.map(r=>{
-    const entries=[];
-    if(r.debit>0)  entries.push({account_code:r.code,dc:'DB',amount:r.debit, description:r.name});
-    if(r.credit>0) entries.push({account_code:r.code,dc:'CR',amount:r.credit,description:r.name});
-    return entries;
+    const amt=Math.abs(r.debit||0)+Math.abs(r.credit||0);
+    if(!amt) return [];
+    if(tab==='is'){
+      // IS: classify by account code — 4xxx=Income(DB), 5xxx=Expense(CR)
+      const codeNum=parseInt(r.code)||0;
+      const dc=(codeNum>=5000&&codeNum<=5999)?'CR':'DB';
+      return [{account_code:r.code, dc, amount:amt, description:r.name}];
+    } else {
+      const entries=[];
+      if(r.debit>0)  entries.push({account_code:r.code,dc:'DB',amount:r.debit, description:r.name});
+      if(r.credit>0) entries.push({account_code:r.code,dc:'CR',amount:r.credit,description:r.name});
+      return entries;
+    }
   }).flat();
 
   const totalDb=lines.filter(l=>l.dc==='DB').reduce((s,l)=>s+l.amount,0);
