@@ -4282,23 +4282,41 @@ function exportImportPDF() {
     y+=40;
   } else {
     const isIS = rec.type==='is';
-    // For IS: income rows have debit>0, expense rows have credit>0
-    // PDF columns: Income (left) | Expenses (right)  — or generic Debit | Credit for TB
+
+    // For IS: force classification by account code — 4xxx=Income, 5xxx=Expense
+    // This guarantees correct columns regardless of how debit/credit were stored
+    let tableRows, totalIncome=0, totalExpense=0, totalDb=0, totalCr=0;
+    if(isIS){
+      tableRows=rec.rows.map(r=>{
+        const codeNum=parseInt(r.code)||0;
+        const amt=Math.abs(r.debit||0)+Math.abs(r.credit||0); // get whichever has a value
+        const isIncome = codeNum>=4000&&codeNum<=4999;
+        const isExpense= codeNum>=5000&&codeNum<=5999;
+        let incomeVal='', expenseVal='';
+        if(isIncome)       { incomeVal=amt>0?fmt(amt):'';  totalIncome+=amt; }
+        else if(isExpense) { expenseVal=amt>0?fmt(amt):''; totalExpense+=amt; }
+        else               { incomeVal=amt>0?fmt(amt):'';  totalIncome+=amt; } // default to income side
+        return [r.code, r.name, incomeVal, expenseVal];
+      });
+    } else {
+      tableRows=rec.rows.map(r=>[
+        r.code, r.name,
+        r.debit>0  ? fmt(r.debit)  : '',
+        r.credit>0 ? fmt(r.credit) : ''
+      ]);
+      totalDb=rec.rows.reduce((s,r)=>s+r.debit,0);
+      totalCr=rec.rows.reduce((s,r)=>s+r.credit,0);
+    }
+
     const col3Head = isIS ? 'Income (CAD)'   : 'Debit (CAD)';
     const col4Head = isIS ? 'Expenses (CAD)' : 'Credit (CAD)';
-    const tableRows=rec.rows.map(r=>[
-      r.code,
-      r.name,
-      r.debit>0  ? fmt(r.debit)  : '',
-      r.credit>0 ? fmt(r.credit) : ''
-    ]);
-    const totalDb=rec.rows.reduce((s,r)=>s+r.debit,0);
-    const totalCr=rec.rows.reduce((s,r)=>s+r.credit,0);
-    const footLabel = isIS ? ['','TOTAL INCOME','TOTAL EXPENSES'] : ['','TOTALS'];
+    const footCol3 = isIS ? fmt(totalIncome)  : fmt(totalDb);
+    const footCol4 = isIS ? fmt(totalExpense) : fmt(totalCr);
+
     doc.autoTable({
-      head:[[  'Account Code','Account Name', col3Head, col4Head ]],
+      head:[['Account Code','Account Name', col3Head, col4Head]],
       body:tableRows,
-      foot:[['', isIS?'TOTALS':'TOTALS', fmt(totalDb), fmt(totalCr)]],
+      foot:[['','TOTALS', footCol3, footCol4]],
       startY:y, theme:'striped',
       headStyles:{fillColor:[2,132,199],textColor:[255,255,255],fontStyle:'bold',fontSize:10},
       footStyles:{fillColor:[240,240,240],textColor:[40,40,40],fontStyle:'bold',fontSize:8},
@@ -4308,7 +4326,7 @@ function exportImportPDF() {
     });
     y=doc.lastAutoTable.finalY+6;
     if(isIS){
-      const netSurplus=totalDb-totalCr;
+      const netSurplus=totalIncome-totalExpense;
       doc.setFontSize(11); doc.setFont('helvetica','bold');
       doc.setTextColor(netSurplus>=0?22:200, netSurplus>=0?163:16, netSurplus>=0?74:46);
       doc.text((netSurplus>=0?'Net Surplus: ':'Net Deficit: ')+fmt(Math.abs(netSurplus)),14,y);
