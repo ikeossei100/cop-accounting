@@ -2284,8 +2284,14 @@ function renderJournals() {
 
 function openJournalForm(id) {
   const j=id?journalData.find(x=>x.id===id):null;
-  jnlLines=j?.lines?JSON.parse(JSON.stringify(j.lines)):[{account_code:'',dc:'DB',amount:'',description:''}];
-  if (jnlLines.length===0) jnlLines=[{account_code:'',dc:'DB',amount:'',description:''},{account_code:'',dc:'CR',amount:'',description:''}];
+  jnlLines=j?.lines?JSON.parse(JSON.stringify(j.lines)):[
+    {account_code:'1110',dc:'DB',amount:'',description:''},
+    {account_code:'',    dc:'CR',amount:'',description:''}
+  ];
+  if(jnlLines.length===0) jnlLines=[
+    {account_code:'1110',dc:'DB',amount:'',description:''},
+    {account_code:'',    dc:'CR',amount:'',description:''}
+  ];
   const canPost=['admin','accountant'].includes(currentProfile?.role);
   const _jd = j?.date||today();
   const _jyr = parseInt(_jd.substring(0,4));
@@ -2345,7 +2351,7 @@ function renderJnlLines() {
   const html=jnlLines.map((l,i)=>`<div class="grid grid-cols-12 gap-1 mb-1 items-center journal-line-row pb-1">
     <div class="col-span-5"><select class="form-input text-xs" onchange="updateJnlLine(${i},'account_code',this.value)"><option value="">— Account —</option>${allOpts.replace(`value="${l.account_code}"`,`value="${l.account_code}" selected`)}</select></div>
     <div class="col-span-2"><select class="form-input text-xs" onchange="updateJnlLine(${i},'dc',this.value)"><option ${l.dc==='DB'?'selected':''}>DB</option><option ${l.dc==='CR'?'selected':''}>CR</option></select></div>
-    <div class="col-span-3"><input type="number" step="0.01" class="form-input text-xs" value="${l.amount}" placeholder="0.00" onchange="updateJnlLine(${i},'amount',this.value)"></div>
+    <div class="col-span-3"><input type="number" step="0.01" class="form-input text-xs" value="${l.amount}" placeholder="0.00" oninput="updateJnlLine(${i},'amount',this.value)"></div>
     <div class="col-span-1"><input class="form-input text-xs" value="${l.description||''}" placeholder="Memo" onchange="updateJnlLine(${i},'description',this.value)"></div>
     <div class="col-span-1 text-center"><button type="button" class="text-red-400 hover:text-red-600 text-xs" onclick="removeJnlLine(${i})">✕</button></div>
   </div>`).join('');
@@ -2353,7 +2359,24 @@ function renderJnlLines() {
   updateJnlTotals();
 }
 
-function updateJnlLine(i,field,val) { jnlLines[i][field]=val; updateJnlTotals(); }
+function updateJnlLine(i,field,val) {
+  jnlLines[i][field]=val;
+  // When an amount is entered, auto-fill the opposite line if it is still blank
+  if(field==='amount' && jnlLines.length===2){
+    const other=1-i;
+    if(!jnlLines[other].amount || jnlLines[other]._autoFilled){
+      jnlLines[other].amount=val;
+      jnlLines[other]._autoFilled=true; // mark so manual entry can override
+      // Update the other input directly to avoid full re-render (which would lose focus)
+      const inputs=document.querySelectorAll('#jnl-lines-container input[type="number"]');
+      if(inputs[other]) inputs[other].value=val;
+    }
+  } else if(field==='amount'){
+    // Manual edit — clear auto-fill flag
+    delete jnlLines[i]._autoFilled;
+  }
+  updateJnlTotals();
+}
 function addJnlLine() { jnlLines.push({account_code:'',dc:'CR',amount:'',description:''}); renderJnlLines(); }
 function removeJnlLine(i) { if(jnlLines.length>2){jnlLines.splice(i,1);renderJnlLines();} }
 
